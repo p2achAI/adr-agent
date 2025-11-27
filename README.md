@@ -151,8 +151,8 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 - YAML 프런트매터: `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`
 - 본문 섹션: Decision, Context, Rationale, Alternatives, Consequences, Validation Rules, Agent Playbook(에이전트 강제/감지/시정 지침), Retrieval Hints
 
-### 다른 리포에서 재사용(Composite Action)
-- 액션 위치: `.github/actions/adr2-agent/action.yml` (이 리포)
+### 다른 리포에서 재사용(GitHub Action)
+- 액션 엔트리포인트: `action.yml` (이 리포 루트)
 - 예시 워크플로(다른 리포의 `.github/workflows/adr.yaml`):
 ```yaml
 name: ADR 2.0 Agent Promotion
@@ -170,7 +170,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: <owner>/<repo>/.github/actions/adr2-agent@main # 태그 고정 권장
+      - uses: <owner>/<repo>@v1 # 태그/커밋 고정 권장
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           openai_model: gpt-5.1
