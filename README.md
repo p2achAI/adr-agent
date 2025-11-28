@@ -132,7 +132,7 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 ### Inputs
 - `openai_api_key` (required): OpenAI API key
 - `openai_model` (optional, default `gpt-5.1`): model name
-- `github_token` (optional, default GITHUB_TOKEN): token to open PR
+- `github_token` (required): token to open PR (PAT with repo write/PR write recommended; GITHUB_TOKEN may be insufficient in some orgs)
 - `pr_branch` (optional, default `adr/auto-update`): branch for ADR PR
 - `pr_title` (optional, default `chore: ADR auto-update`): PR title/commit message
 - `pr_body` (optional): PR body
