@@ -118,39 +118,6 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 
 ---
 
-## 7. ADR 2.0 자동화(GitHub Actions)
-
-이 리포지토리는 AAR → ADR 승격을 에이전트 친화적으로 자동화합니다.
-
-### 작동 방식
-- 워크플로: `.github/workflows/adr-generator.yml`
-- 트리거: `docs/**` 변경 또는 `workflow_dispatch`
-- 단계:
-  1. `docs/` 하위 AAR(`docs/adr/` 제외)을 스캔해 ADR 후보 감지(프롬프트: `adr-candidate-detect-prompt.md`).
-  2. ADR 생성(프롬프트: `adr-generate-prompt.md`, 규칙 추출: `validate-rule-prompt.md`).
-  3. `docs/adr/ADR-XXXX-<slug>.md`로 저장하며 YAML 프런트매터에 `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms` 포함.
-  4. `docs/adr/index.json`을 생성/갱신하여 에이전트 검색용 메타데이터 제공.
-  5. ADR로 승격된 AAR과 ADR 후보가 아니라고 판정된 AAR은 정리 차원에서 삭제.
-
-### 필요한 설정
-- 레포지토리 Secrets: `OPENAI_API_KEY`
-- 선택: 레포지토리 Variables `OPENAI_MODEL`(기본 `gpt-5.1`)
-
-### 로컬 실행(선택)
-- 의존성 설치: `pip install -r requirements.txt`
-- 실행:
-  ```bash
-  export OPENAI_API_KEY=...
-  # (선택) export OPENAI_MODEL=gpt-5.1
-  python scripts/adr2_agent_action.py
-  ```
-- 출력: `docs/adr/ADR-XXXX-*.md`와 `docs/adr/index.json` 생성/갱신
-  - `index.json`은 토큰 절약을 위해 요약 메타데이터만 포함(id/title/status/scope/path/related/index_terms/decision_summary/source)
-
-### ADR 출력 형태(에이전트 지향)
-- YAML 프런트매터: `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`
-- 본문 섹션: Decision, Context, Rationale, Alternatives, Consequences, Validation Rules, Agent Playbook(에이전트 강제/감지/시정 지침), Retrieval Hints
-
 ## GitHub Action (Marketplace)
 
 ### Summary
