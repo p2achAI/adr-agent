@@ -255,7 +255,7 @@ def render_adr(markup: Dict, body: Dict) -> str:
 
     return (
         "---\n"
-        f"{yaml.safe_dump(front_matter, sort_keys=False)}"
+        f"{yaml.safe_dump(front_matter, sort_keys=False, allow_unicode=True)}"
         "---\n\n"
         "# Decision\n"
         f"{markup['decision']}\n\n"
@@ -335,7 +335,7 @@ def write_index(catalog: List[Dict]) -> None:
         "count": len(thin_items),
         "items": sorted(thin_items, key=lambda c: c.get("id", "")),
     }
-    write_file(INDEX_PATH, json.dumps(payload, indent=2))
+    write_file(INDEX_PATH, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def already_promoted(source_path: Path, catalog: List[Dict]) -> bool:
