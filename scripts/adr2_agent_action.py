@@ -158,8 +158,7 @@ def detect_candidates(prompts: Dict[str, str]) -> Tuple[List[Tuple[Path, Dict]],
 
 
 def build_generator_prompt(prompts: Dict[str, str]) -> str:
-    language = DEFAULT_LANGUAGE
-    language_hint = f"Write the ADR in {language}."
+    language_hint = f"Write the ADR in {DEFAULT_LANGUAGE}."
     base = f"{CONTEXT_PRIMER}\n\n{language_hint}\n\n{prompts.get('generate', '')}".strip()
     schema_hint = (
         "Return ONLY a JSON object with keys:"
@@ -244,37 +243,22 @@ def render_adr(markup: Dict, body: Dict) -> str:
         "scope": markup["scope"],
         "created_at": markup["created_at"],
         "updated_at": markup["updated_at"],
-        "language": markup["language"],
         "decision": markup["decision"],
         "related": markup.get("related", []),
         "validation_rules": validation_rules,
         "agent_playbook": agent_playbook,
         "agent_signals": agent_signals,
         "index_terms": index_terms,
+        "context": body.get("context", "").strip(),
+        "rationale": body.get("rationale", "").strip(),
+        "alternatives": alternatives,
+        "consequences": consequences,
     }
 
     return (
         "---\n"
         f"{yaml.safe_dump(front_matter, sort_keys=False, allow_unicode=True)}"
-        "---\n\n"
-        "# Decision\n"
-        f"{markup['decision']}\n\n"
-        "# Context\n"
-        f"{body.get('context', '').strip()}\n\n"
-        "# Rationale\n"
-        f"{body.get('rationale', '').strip()}\n\n"
-        "# Alternatives Considered\n"
-        f"{alternatives_block}\n\n"
-        "# Consequences\n"
-        f"{consequences_block}\n\n"
-        "# Validation Rules\n"
-        f"{validation_block}\n\n"
-        "# Agent Playbook\n"
-        f"{playbook_block}\n\n"
-        "# Agent Signals\n"
-        f"{signals_block}\n\n"
-        "# Retrieval Hints\n"
-        f"{index_block}\n"
+        "---\n"
     )
 
 
@@ -292,7 +276,6 @@ def catalog_existing_adrs() -> List[Dict]:
                 "id": meta.get("id"),
                 "title": meta.get("title"),
                 "scope": meta.get("scope"),
-                "language": meta.get("language"),
                 "related": meta.get("related", []),
                 "validation_rules": meta.get("validation_rules", []),
                 "agent_playbook": meta.get("agent_playbook", []),
@@ -320,7 +303,6 @@ def write_index(catalog: List[Dict]) -> None:
                 "id": item.get("id"),
                 "title": item.get("title"),
                 "scope": item.get("scope"),
-                "language": item.get("language"),
                 "path": item.get("path"),
                 "related": item.get("related", []),
                 "index_terms": item.get("index_terms", []),
@@ -386,7 +368,6 @@ def main() -> None:
             "scope": payload.get("scope", scope_hint),
             "created_at": now_iso(),
             "updated_at": now_iso(),
-            "language": DEFAULT_LANGUAGE,
             "decision": payload.get("decision", "").strip(),
             "related": related_ids,
             "validation_rules": payload.get("validation_rules", []),
@@ -402,7 +383,6 @@ def main() -> None:
             "id": adr_id,
             "title": markup["title"],
             "scope": markup["scope"],
-            "language": markup["language"],
             "related": related_ids,
             "validation_rules": markup["validation_rules"],
             "path": str(adr_path.relative_to(ROOT)),

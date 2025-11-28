@@ -137,7 +137,7 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 - `pr_title` (optional, default `chore: ADR auto-update`): PR title/commit message
 - `pr_body` (optional): PR body
 - `pr_base` (optional): base branch (defaults to repo default)
-- `language` (optional, default `en`): ADR output language (e.g., `ko`, `en`)
+- `language` (optional, default `en`): ADR output language (not stored in front matter; applies to generated text)
 
 ### Permissions
 ```yaml
@@ -174,11 +174,11 @@ jobs:
 
 ### Flow
 1) Scan `docs/` (skip `docs/adr/`) → detect candidates  
-2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/scope/language/created_at/updated_at/decision/related/validation_rules/agent_playbook/agent_signals/index_terms`)  
+2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/scope/created_at/updated_at/decision/context/rationale/alternatives/consequences/related/validation_rules/agent_playbook/agent_signals/index_terms`)  
 3) Update slim `docs/adr/index.json` (with `decision_summary`)  
 4) Delete promoted AARs and non-candidates  
 5) Open PR with the ADR/cleanup changes (skipped if no changes)  
-6) ADR content is written in the selected language (default English)
+6) ADR content generated in the selected `language` (front matter only; no duplicated markdown body)
 
 ### Environment
 - `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.
@@ -187,5 +187,5 @@ jobs:
 - AAR source files are deleted after processing; back them up elsewhere if you need to keep originals.
 
 ### ADR output (agent-friendly)
-- Front matter: `id`, `scope`, `language`, `created_at`, `updated_at`, `decision`, `related`, `validation_rules`, `agent_playbook`, `agent_signals`(importance/enforcement), `index_terms`
-- Body sections: Decision, Context, Rationale, Alternatives, Consequences, Validation Rules, Agent Playbook, Agent Signals, Retrieval Hints
+- Front matter only (YAML between `---`): `id`, `scope`, `created_at`, `updated_at`, `decision`, `context`, `rationale`, `alternatives`, `consequences`, `related`, `validation_rules`, `agent_playbook`, `agent_signals`(importance/enforcement), `index_terms`
+- No duplicated markdown body (keeps tokens small and avoids repeated content)
