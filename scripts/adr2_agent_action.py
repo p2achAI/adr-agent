@@ -38,7 +38,7 @@ DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
 CONTEXT_PRIMER = """
 You are working with ADR 2.0:
 - AAR (Agent Analysis Record): natural-language reasoning stored under docs/ (except docs/adr/). Describes why a change was made; no code/diffs.
-- ADR (Architecture Decision Record): formal, machine-readable decision doc stored under docs/adr/. Contains status, scope, decision, rationale, alternatives, consequences, validation rules. Used by agents/CI to enforce architecture.
+- ADR (Architecture Decision Record): formal, machine-readable decision doc stored under docs/adr/. Contains scope, decision, rationale, alternatives, consequences, validation rules, agent signals (importance, enforcement level), timestamps. Used by agents/CI to enforce architecture.
 - Goal: promote only architectural decisions from AARs into ADRs, produce agent-friendly, succinct, declarative outputs.
 """.strip()
 
@@ -160,15 +160,15 @@ def build_generator_prompt(prompts: Dict[str, str]) -> str:
     base = f"{CONTEXT_PRIMER}\n\n{prompts.get('generate', '')}".strip()
     schema_hint = (
         "Return ONLY a JSON object with keys:"
-        ' {"title","status","scope","decision","context","rationale",'
+        ' {"title","scope","decision","context","rationale",'
         '"alternatives","consequences","validation_rules","agent_playbook",'
-        '"related_suggestions","index_terms"}. '
+        '"agent_signals","related_suggestions","index_terms"}. '
         'Use short, declarative language for agents. '
-        'Status must default to "Proposed". '
         'Scope must be one of ["architecture","infrastructure","data-model","api","component"]. '
         "Alternatives and consequences must be arrays. "
         "Validation rules must be an array of declarative constraints. "
         "agent_playbook must be an array of 3-6 imperative, step-like directives for agents (when to enforce, how to detect drift, how to remediate). "
+        "agent_signals must include importance (high/medium/low) and enforcement (must/should/monitor). "
         "related_suggestions is an array of titles/phrases that may match other ADRs. "
         "index_terms is an array of 3-7 short keywords for retrieval. "
         "Do not include markdown or prose outside of the JSON object."
@@ -179,12 +179,12 @@ def build_generator_prompt(prompts: Dict[str, str]) -> str:
 def generate_adr_payload(prompts: Dict[str, str], aar_text: str, scope_hint: str) -> Dict:
     system_prompt = build_generator_prompt(prompts)
     payload = call_openai_json(system_prompt, aar_text)
-    payload.setdefault("status", "Proposed")
     payload.setdefault("scope", scope_hint or "architecture")
     payload.setdefault("alternatives", [])
     payload.setdefault("consequences", [])
     payload.setdefault("validation_rules", [])
     payload.setdefault("agent_playbook", [])
+    payload.setdefault("agent_signals", {"importance": "medium", "enforcement": "should"})
     payload.setdefault("related_suggestions", [])
     payload.setdefault("index_terms", [])
     return payload
@@ -224,11 +224,13 @@ def render_adr(markup: Dict, body: Dict) -> str:
     consequences = body.get("consequences") or []
     validation_rules = markup.get("validation_rules") or []
     agent_playbook = markup.get("agent_playbook") or []
+    agent_signals = markup.get("agent_signals") or {"importance": "medium", "enforcement": "should"}
 
     alternatives_block = "\n".join(f"- {item}" for item in alternatives) or "- None recorded."
     consequences_block = "\n".join(f"- {item}" for item in consequences) or "- Not documented."
     validation_block = "\n".join(f"- {item}" for item in validation_rules) or "- No validation rules captured."
     playbook_block = "\n".join(f"- {item}" for item in agent_playbook) or "- No agent playbook provided."
+    signals_block = f"- Importance: {agent_signals.get('importance', 'medium')}\n- Enforcement: {agent_signals.get('enforcement', 'should')}"
 
     index_terms = markup.get("index_terms") or []
     index_block = "\n".join(f"- {term}" for term in index_terms) or "- none"
@@ -236,14 +238,14 @@ def render_adr(markup: Dict, body: Dict) -> str:
     front_matter = {
         "id": markup["id"],
         "title": markup["title"],
-        "status": markup["status"],
         "scope": markup["scope"],
         "created_at": markup["created_at"],
-        "source": markup["source"],
+        "updated_at": markup["updated_at"],
         "decision": markup["decision"],
         "related": markup.get("related", []),
         "validation_rules": validation_rules,
         "agent_playbook": agent_playbook,
+        "agent_signals": agent_signals,
         "index_terms": index_terms,
     }
 
@@ -265,6 +267,8 @@ def render_adr(markup: Dict, body: Dict) -> str:
         f"{validation_block}\n\n"
         "# Agent Playbook\n"
         f"{playbook_block}\n\n"
+        "# Agent Signals\n"
+        f"{signals_block}\n\n"
         "# Retrieval Hints\n"
         f"{index_block}\n"
     )
@@ -283,14 +287,15 @@ def catalog_existing_adrs() -> List[Dict]:
             {
                 "id": meta.get("id"),
                 "title": meta.get("title"),
-                "status": meta.get("status"),
                 "scope": meta.get("scope"),
                 "related": meta.get("related", []),
                 "validation_rules": meta.get("validation_rules", []),
+                "agent_playbook": meta.get("agent_playbook", []),
+                "agent_signals": meta.get("agent_signals", {}),
                 "path": str(path.relative_to(ROOT)),
                 "decision": meta.get("decision"),
                 "index_terms": meta.get("index_terms", []),
-                "source": meta.get("source"),
+                "updated_at": meta.get("updated_at"),
             }
         )
     return catalog
@@ -309,13 +314,13 @@ def write_index(catalog: List[Dict]) -> None:
             {
                 "id": item.get("id"),
                 "title": item.get("title"),
-                "status": item.get("status"),
                 "scope": item.get("scope"),
                 "path": item.get("path"),
                 "related": item.get("related", []),
                 "index_terms": item.get("index_terms", []),
                 "decision_summary": summarize(item.get("decision")),
-                "source": item.get("source"),
+                "agent_signals": item.get("agent_signals", {}),
+                "updated_at": item.get("updated_at"),
             }
         )
 
@@ -371,14 +376,14 @@ def main() -> None:
         markup = {
             "id": adr_id,
             "title": payload.get("title", adr_id),
-            "status": payload.get("status", "Proposed"),
             "scope": payload.get("scope", scope_hint),
             "created_at": now_iso(),
-            "source": str(path.relative_to(ROOT)),
+            "updated_at": now_iso(),
             "decision": payload.get("decision", "").strip(),
             "related": related_ids,
             "validation_rules": payload.get("validation_rules", []),
             "agent_playbook": payload.get("agent_playbook", []),
+            "agent_signals": payload.get("agent_signals", {"importance": "medium", "enforcement": "should"}),
             "index_terms": payload.get("index_terms", []),
         }
 
@@ -388,15 +393,15 @@ def main() -> None:
         catalog_entry = {
             "id": adr_id,
             "title": markup["title"],
-            "status": markup["status"],
             "scope": markup["scope"],
             "related": related_ids,
             "validation_rules": markup["validation_rules"],
             "path": str(adr_path.relative_to(ROOT)),
             "decision": markup["decision"],
             "agent_playbook": markup["agent_playbook"],
+            "agent_signals": markup["agent_signals"],
             "index_terms": markup["index_terms"],
-            "source": markup["source"],
+            "updated_at": markup["updated_at"],
         }
         new_catalog_entries.append(catalog_entry)
         log(f"Generated ADR {adr_id} -> {adr_path}")

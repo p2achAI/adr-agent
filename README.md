@@ -169,13 +169,18 @@ jobs:
 
 ### Flow
 1) Scan `docs/` (skip `docs/adr/`) → detect candidates  
-2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`)  
+2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/scope/created_at/updated_at/decision/related/validation_rules/agent_playbook/agent_signals/index_terms`)  
 3) Update slim `docs/adr/index.json` (with `decision_summary`)  
 4) Delete promoted AARs and non-candidates  
 5) Open PR with the ADR/cleanup changes (skipped if no changes)  
+6) ADR content is written in Korean (per prompt)
 
 ### Environment
 - `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.
 
 ### Caution
 - AAR source files are deleted after processing; back them up elsewhere if you need to keep originals.
+
+### ADR output (agent-friendly)
+- Front matter: `id`, `scope`, `created_at`, `updated_at`, `decision`, `related`, `validation_rules`, `agent_playbook`, `agent_signals`(importance/enforcement), `index_terms`
+- Body sections: Decision, Context, Rationale, Alternatives, Consequences, Validation Rules, Agent Playbook, Agent Signals, Retrieval Hints
