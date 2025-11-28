@@ -33,6 +33,7 @@ ADR_DIR = DOCS_DIR / "adr"
 INDEX_PATH = ADR_DIR / "index.json"
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+DEFAULT_LANGUAGE = os.getenv("ADR2_LANGUAGE", "en")
 
 # Brief context primer for LLMs so they understand ADR 2.0 vs AAR.
 CONTEXT_PRIMER = """
@@ -157,7 +158,9 @@ def detect_candidates(prompts: Dict[str, str]) -> Tuple[List[Tuple[Path, Dict]],
 
 
 def build_generator_prompt(prompts: Dict[str, str]) -> str:
-    base = f"{CONTEXT_PRIMER}\n\n{prompts.get('generate', '')}".strip()
+    language = DEFAULT_LANGUAGE
+    language_hint = f"Write the ADR in {language}."
+    base = f"{CONTEXT_PRIMER}\n\n{language_hint}\n\n{prompts.get('generate', '')}".strip()
     schema_hint = (
         "Return ONLY a JSON object with keys:"
         ' {"title","scope","decision","context","rationale",'
@@ -241,6 +244,7 @@ def render_adr(markup: Dict, body: Dict) -> str:
         "scope": markup["scope"],
         "created_at": markup["created_at"],
         "updated_at": markup["updated_at"],
+        "language": markup["language"],
         "decision": markup["decision"],
         "related": markup.get("related", []),
         "validation_rules": validation_rules,
@@ -288,6 +292,7 @@ def catalog_existing_adrs() -> List[Dict]:
                 "id": meta.get("id"),
                 "title": meta.get("title"),
                 "scope": meta.get("scope"),
+                "language": meta.get("language"),
                 "related": meta.get("related", []),
                 "validation_rules": meta.get("validation_rules", []),
                 "agent_playbook": meta.get("agent_playbook", []),
@@ -315,6 +320,7 @@ def write_index(catalog: List[Dict]) -> None:
                 "id": item.get("id"),
                 "title": item.get("title"),
                 "scope": item.get("scope"),
+                "language": item.get("language"),
                 "path": item.get("path"),
                 "related": item.get("related", []),
                 "index_terms": item.get("index_terms", []),
@@ -344,6 +350,7 @@ def main() -> None:
     prompts = load_prompts()
     log(f"Repo root: {ROOT}")
     log(f"Using model: {DEFAULT_MODEL}")
+    log(f"Language: {DEFAULT_LANGUAGE}")
     catalog = catalog_existing_adrs()
     log(f"Loaded catalog with {len(catalog)} existing ADR(s).")
 
@@ -379,6 +386,7 @@ def main() -> None:
             "scope": payload.get("scope", scope_hint),
             "created_at": now_iso(),
             "updated_at": now_iso(),
+            "language": DEFAULT_LANGUAGE,
             "decision": payload.get("decision", "").strip(),
             "related": related_ids,
             "validation_rules": payload.get("validation_rules", []),
@@ -394,6 +402,7 @@ def main() -> None:
             "id": adr_id,
             "title": markup["title"],
             "scope": markup["scope"],
+            "language": markup["language"],
             "related": related_ids,
             "validation_rules": markup["validation_rules"],
             "path": str(adr_path.relative_to(ROOT)),

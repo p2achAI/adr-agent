@@ -12,7 +12,6 @@ Rules:
 - Extract intent, rationale, trade-offs, and long-term constraints.
 - DO NOT include code, diffs, or implementation details.
 - Produce a concise decision statement.
-- Write the ADR in Korean.
 - Add “Validation Rules” that future development must follow.
 - Validation Rules must be declarative and verifiable by CI.
 - If the AAR contains multiple decisions, choose the most important one.

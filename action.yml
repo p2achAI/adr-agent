@@ -26,6 +26,10 @@ inputs:
   pr_base:
     description: "Base branch for the PR (optional; defaults to repo default)"
     required: false
+  language:
+    description: "Language to generate ADRs (e.g., en, ko); default en"
+    required: false
+    default: "en"
 runs:
   using: "composite"
   steps:
@@ -46,6 +50,7 @@ runs:
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         OPENAI_MODEL: ${{ inputs.openai_model }}
         ADR2_REPO_ROOT: ${{ github.workspace }}
+        ADR2_LANGUAGE: ${{ inputs.language }}
       run: python "$GITHUB_ACTION_PATH/scripts/adr2_agent_action.py"
 
     - name: Show ADR index

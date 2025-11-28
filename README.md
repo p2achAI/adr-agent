@@ -50,9 +50,6 @@ Characteristics:
 
 ```
 # Title
-# Status
-(Proposed | Accepted | Deprecated | Superseded)
-
 # Context
 Background, problem, constraints.
 
@@ -70,6 +67,13 @@ Positive/negative outcomes of the decision.
 
 # Validation Rules
 Declarative technical constraints for CI enforcement.
+
+# Agent Playbook
+Imperative steps for agents: enforce, detect drift, remediate.
+
+# Agent Signals
+- Importance: high | medium | low
+- Enforcement: must | should | monitor
 ```
 
 ---
@@ -123,7 +127,7 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 ### Summary
 - Name: ADR 2.0 Agent Promotion
 - Purpose: detect AARs under `docs/`, promote to ADRs under `docs/adr/ADR-XXXX-*.md`, update `docs/adr/index.json`, and clean up processed AARs
-- Features: agent-friendly template (Agent Playbook, Validation Rules), slim index, progress logs, automatic AAR cleanup
+- Features: agent-friendly template (Agent Playbook, Agent Signals, Validation Rules), slim index, progress logs, automatic AAR cleanup
 
 ### Inputs
 - `openai_api_key` (required): OpenAI API key
@@ -173,7 +177,6 @@ jobs:
 3) Update slim `docs/adr/index.json` (with `decision_summary`)  
 4) Delete promoted AARs and non-candidates  
 5) Open PR with the ADR/cleanup changes (skipped if no changes)  
-6) ADR content is written in Korean (per prompt)
 
 ### Environment
 - `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.
