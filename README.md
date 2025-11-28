@@ -151,9 +151,24 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 - YAML 프런트매터: `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`
 - 본문 섹션: Decision, Context, Rationale, Alternatives, Consequences, Validation Rules, Agent Playbook(에이전트 강제/감지/시정 지침), Retrieval Hints
 
-### 다른 리포에서 재사용(GitHub Action)
-- 액션 엔트리포인트: `action.yml` (이 리포 루트)
-- 예시 워크플로(다른 리포의 `.github/workflows/adr.yaml`):
+## GitHub Action (Marketplace)
+
+### Summary
+- Name: ADR 2.0 Agent Promotion
+- Purpose: detect AARs under `docs/`, promote to ADRs under `docs/adr/ADR-XXXX-*.md`, update `docs/adr/index.json`, and clean up processed AARs
+- Features: agent-friendly template (Agent Playbook, Validation Rules), slim index, progress logs, automatic AAR cleanup
+
+### Inputs
+- `openai_api_key` (required): OpenAI API key
+- `openai_model` (optional, default `gpt-5.1`): model name
+
+### Permissions
+```yaml
+permissions:
+  contents: write
+```
+
+### Example workflow (`.github/workflows/adr.yaml`)
 ```yaml
 name: ADR 2.0 Agent Promotion
 on:
@@ -170,9 +185,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: <owner>/<repo>@v1 # 태그/커밋 고정 권장
+      - uses: p2achAI/adr-agent@v1  # pin tag/commit
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           openai_model: gpt-5.1
 ```
-- `ADR2_REPO_ROOT`는 액션 내부에서 자동으로 `github.workspace`로 설정되어 호출 리포의 `docs/`를 스캔합니다.
+
+### Flow
+1) Scan `docs/` (skip `docs/adr/`) → detect candidates  
+2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`)  
+3) Update slim `docs/adr/index.json` (with `decision_summary`)  
+4) Delete promoted AARs and non-candidates  
+
+### Environment
+- `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.
+
+### Caution
+- AAR source files are deleted after processing; back them up elsewhere if you need to keep originals.
