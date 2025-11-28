@@ -128,6 +128,11 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 ### Inputs
 - `openai_api_key` (required): OpenAI API key
 - `openai_model` (optional, default `gpt-5.1`): model name
+- `github_token` (optional, default GITHUB_TOKEN): token to open PR
+- `pr_branch` (optional, default `adr/auto-update`): branch for ADR PR
+- `pr_title` (optional, default `chore: ADR auto-update`): PR title/commit message
+- `pr_body` (optional): PR body
+- `pr_base` (optional): base branch (defaults to repo default)
 
 ### Permissions
 ```yaml
@@ -136,6 +141,7 @@ permissions:
 ```
 
 ### Example workflow (`.github/workflows/adr.yaml`)
+> Note: this repository only provides the Action for Marketplace. Workflows should be added in the consumer repository.
 ```yaml
 name: ADR 2.0 Agent Promotion
 on:
@@ -156,6 +162,9 @@ jobs:
         with:
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           openai_model: gpt-5.1
+          pr_branch: adr/auto-${{ github.run_id }}
+          pr_title: chore: ADR auto-update (#${{ github.run_number }})
+          pr_body: Automated ADR updates generated from AARs.
 ```
 
 ### Flow
@@ -163,6 +172,7 @@ jobs:
 2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/status/scope/created_at/source/decision/related/validation_rules/agent_playbook/index_terms`)  
 3) Update slim `docs/adr/index.json` (with `decision_summary`)  
 4) Delete promoted AARs and non-candidates  
+5) Open PR with the ADR/cleanup changes (skipped if no changes)  
 
 ### Environment
 - `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.

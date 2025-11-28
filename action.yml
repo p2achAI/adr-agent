@@ -8,6 +8,24 @@ inputs:
     description: "OpenAI model name"
     required: false
     default: "gpt-5.1"
+  github_token:
+    description: "GitHub token for creating PRs (defaults to GITHUB_TOKEN)"
+    required: false
+  pr_branch:
+    description: "Branch name for ADR auto-PR"
+    required: false
+    default: "adr/auto-update"
+  pr_title:
+    description: "PR title for ADR updates"
+    required: false
+    default: "chore: ADR auto-update"
+  pr_body:
+    description: "PR body for ADR updates"
+    required: false
+    default: "Automated ADR updates generated from AARs."
+  pr_base:
+    description: "Base branch for the PR (optional; defaults to repo default)"
+    required: false
 runs:
   using: "composite"
   steps:
@@ -34,3 +52,16 @@ runs:
       if: always()
       shell: bash
       run: test -f docs/adr/index.json && cat docs/adr/index.json || echo "index.json not created"
+
+    - name: Create PR if changes
+      uses: peter-evans/create-pull-request@v6
+      with:
+        token: ${{ inputs.github_token || github.token }}
+        commit-message: ${{ inputs.pr_title }}
+        branch: ${{ inputs.pr_branch }}
+        title: ${{ inputs.pr_title }}
+        body: ${{ inputs.pr_body }}
+        base: ${{ inputs.pr_base }}
+        delete-branch: true
+        add-paths: |
+          docs/**
