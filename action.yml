@@ -1,13 +1,24 @@
 name: "ADR 2.0 Agent Promotion"
 description: "Promote AARs under docs/aar/ to ADRs under docs/adr/, update index.json (agent-friendly)."
 inputs:
+  llm_provider:
+    description: "LLM provider to use: 'openai' or 'claude'"
+    required: false
+    default: "openai"
   openai_api_key:
-    description: "OpenAI API key"
-    required: true
+    description: "OpenAI API key (required when llm_provider=openai)"
+    required: false
   openai_model:
     description: "OpenAI model name"
     required: false
     default: "gpt-5.1"
+  anthropic_api_key:
+    description: "Anthropic API key (required when llm_provider=claude)"
+    required: false
+  claude_model:
+    description: "Claude model name"
+    required: false
+    default: "claude-sonnet-4-6"
   github_token:
     description: "GitHub token for creating PRs (PAT recommended; GITHUB_TOKEN may be insufficient in some orgs)"
     required: true
@@ -47,8 +58,11 @@ runs:
     - name: Generate ADRs from AARs
       shell: bash
       env:
+        LLM_PROVIDER: ${{ inputs.llm_provider }}
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         OPENAI_MODEL: ${{ inputs.openai_model }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        CLAUDE_MODEL: ${{ inputs.claude_model }}
         ADR2_REPO_ROOT: ${{ github.workspace }}
         ADR2_LANGUAGE: ${{ inputs.language }}
       run: python "$GITHUB_ACTION_PATH/scripts/adr2_agent_action.py"

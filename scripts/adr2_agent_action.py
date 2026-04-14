@@ -9,8 +9,9 @@ This script is meant to be run inside CI (GitHub Actions) to:
 - Maintain docs/adr/index.json so agents can quickly locate relevant ADRs
 
 Requirements:
-- OPENAI_API_KEY must be available in the environment.
-- Optionally set OPENAI_MODEL (defaults to gpt-5.1).
+- Set LLM_PROVIDER to 'openai' (default) or 'claude'.
+- For OpenAI: OPENAI_API_KEY must be available. Optionally set OPENAI_MODEL (defaults to gpt-5.1).
+- For Claude: ANTHROPIC_API_KEY must be available. Optionally set CLAUDE_MODEL (defaults to claude-sonnet-4-6).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import anthropic
 import yaml
 from openai import OpenAI, OpenAIError
 
@@ -65,7 +67,13 @@ ADR_DIR = DOCS_DIR / "adr"
 AAR_DIR = DOCS_DIR / "aar"
 INDEX_PATH = ADR_DIR / "index.json"
 
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+
+if LLM_PROVIDER == "claude":
+    DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+else:
+    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+
 DEFAULT_LANGUAGE = os.getenv("ADR2_LANGUAGE", "en")
 
 
@@ -203,6 +211,7 @@ class ADRCandidate:
 
 
 _OPENAI_CLIENT: OpenAI | None = None
+_ANTHROPIC_CLIENT: anthropic.Anthropic | None = None
 
 
 def get_openai_client() -> OpenAI:
@@ -210,6 +219,13 @@ def get_openai_client() -> OpenAI:
     if _OPENAI_CLIENT is None:
         _OPENAI_CLIENT = OpenAI()
     return _OPENAI_CLIENT
+
+
+def get_anthropic_client() -> anthropic.Anthropic:
+    global _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is None:
+        _ANTHROPIC_CLIENT = anthropic.Anthropic()
+    return _ANTHROPIC_CLIENT
 
 
 def _strip_code_fences(text: str) -> str:
@@ -282,6 +298,78 @@ def call_openai_text(
     return response.choices[0].message.content or ""
 
 
+def call_claude_text(
+    *,
+    model: str,
+    messages: List[Dict[str, str]],
+    response_format: Dict | None = None,
+    instructions: str | None = None,
+) -> str:
+    """Call Anthropic Claude API with adaptive thinking (streaming)."""
+    client = get_anthropic_client()
+
+    # Build system prompt from instructions and system messages
+    system_parts = []
+    if instructions:
+        system_parts.append(instructions)
+
+    filtered_messages: List[Dict[str, str]] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_parts.append(msg.get("content", ""))
+        else:
+            filtered_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    system = "\n\n".join(part for part in system_parts if part)
+
+    # For JSON mode, reinforce via system prompt (Claude has no native json_object mode)
+    if response_format and response_format.get("type") == "json_object":
+        json_hint = "Return ONLY a valid JSON object. No prose, no markdown code fences."
+        system = f"{system}\n\n{json_hint}" if system else json_hint
+
+    create_kwargs: Dict[str, Any] = {
+        "model": model,
+        "max_tokens": 16000,
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
+        "messages": filtered_messages,
+    }
+    if system:
+        create_kwargs["system"] = system
+
+    try:
+        with client.messages.stream(**create_kwargs) as stream:
+            final_message = stream.get_final_message()
+    except anthropic.APIError as exc:
+        raise RuntimeError(f"Anthropic API call failed: {exc}") from exc
+
+    text_blocks = [block.text for block in final_message.content if block.type == "text"]
+    return "".join(text_blocks)
+
+
+def call_llm_text(
+    *,
+    model: str,
+    messages: List[Dict[str, str]],
+    response_format: Dict | None = None,
+    instructions: str | None = None,
+) -> str:
+    """Dispatch to the configured LLM provider (openai or claude)."""
+    if LLM_PROVIDER == "claude":
+        return call_claude_text(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            instructions=instructions,
+        )
+    return call_openai_text(
+        model=model,
+        messages=messages,
+        response_format=response_format,
+        instructions=instructions,
+    )
+
+
 def call_openai_json_object(
     system_prompt: str,
     user_content: str,
@@ -303,7 +391,7 @@ def call_openai_json_object(
                     "content": "Your previous reply was not valid JSON. Return ONLY a valid JSON object.",
                 }
             )
-        last_content = call_openai_text(
+        last_content = call_llm_text(
             model=model,
             messages=messages,
             response_format={"type": "json_object"},
@@ -345,7 +433,7 @@ def call_openai_json_value(
                     "content": "Return ONLY valid JSON (no prose, no markdown).",
                 }
             )
-        last_content = call_openai_text(
+        last_content = call_llm_text(
             model=model, messages=messages, instructions=instructions
         )
         try:
@@ -689,14 +777,19 @@ def already_promoted(source_path: Path, catalog: List[Dict]) -> bool:
 
 
 def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise SystemExit("OPENAI_API_KEY is required.")
+    if LLM_PROVIDER == "claude":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise SystemExit("ANTHROPIC_API_KEY is required when LLM_PROVIDER=claude.")
+        log(f"Provider: Claude (model={DEFAULT_MODEL})")
+    else:
+        if not os.getenv("OPENAI_API_KEY"):
+            raise SystemExit("OPENAI_API_KEY is required when LLM_PROVIDER=openai.")
+        log(f"Provider: OpenAI (model={DEFAULT_MODEL})")
 
     prompts = load_prompts()
     if "adr2" not in prompts:
         raise SystemExit("README.md prompt (adr2) is required.")
     log(f"Repo root: {ROOT}")
-    log(f"Using model: {DEFAULT_MODEL}")
     log(f"Language: {DEFAULT_LANGUAGE}")
     log("Agentic reasoning: on")
     catalog = catalog_existing_adrs()
