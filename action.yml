@@ -1,5 +1,5 @@
 name: "ADR 2.0 Agent Promotion"
-description: "Promote AARs under docs/aar/ to ADRs under docs/adr/, update index.json (agent-friendly)."
+description: "Promote AARs under configured docs/aar/ directories to ADRs under docs/adr/, update index.json (agent-friendly)."
 inputs:
   llm_provider:
     description: "LLM provider to use: 'openai' or 'claude'"
@@ -37,6 +37,17 @@ inputs:
   pr_base:
     description: "Base branch for the PR (optional; defaults to repo default)"
     required: false
+  reviewers:
+    description: "Comma or newline separated GitHub usernames to request as PR reviewers"
+    required: false
+  docs_dirs:
+    description: "Comma or newline separated docs directories to process. Each directory must contain aar/ and adr/. Defaults to docs"
+    required: false
+    default: "docs"
+  add_paths:
+    description: "Paths passed to create-pull-request add-paths"
+    required: false
+    default: "docs/**"
   language:
     description: "Language to generate ADRs (e.g., en, ko); default en"
     required: false
@@ -64,13 +75,24 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         CLAUDE_MODEL: ${{ inputs.claude_model }}
         ADR2_REPO_ROOT: ${{ github.workspace }}
+        ADR2_DOCS_DIRS: ${{ inputs.docs_dirs }}
         ADR2_LANGUAGE: ${{ inputs.language }}
       run: python "$GITHUB_ACTION_PATH/scripts/adr2_agent_action.py"
 
-    - name: Show ADR index
+    - name: Show ADR indexes
       if: always()
       shell: bash
-      run: test -f docs/adr/index.json && cat docs/adr/index.json || echo "index.json not created"
+      env:
+        ADR2_DOCS_DIRS: ${{ inputs.docs_dirs }}
+      run: |
+        set -euo pipefail
+
+        mapfile -t docs_dirs < <(printf '%s\n' "${ADR2_DOCS_DIRS:-docs}" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d')
+        for docs_dir in "${docs_dirs[@]}"; do
+          index_path="${docs_dir}/adr/index.json"
+          echo "### ${index_path}"
+          test -f "${index_path}" && cat "${index_path}" || echo "index.json not created"
+        done
 
     - name: Create PR if changes
       uses: peter-evans/create-pull-request@v6
@@ -82,5 +104,5 @@ runs:
         body: ${{ inputs.pr_body }}
         base: ${{ inputs.pr_base }}
         delete-branch: true
-        add-paths: |
-          docs/**
+        reviewers: ${{ inputs.reviewers }}
+        add-paths: ${{ inputs.add_paths }}

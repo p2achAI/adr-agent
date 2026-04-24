@@ -126,7 +126,7 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 
 ### Summary
 - Name: ADR 2.0 Agent Promotion
-- Purpose: detect AARs under `docs/aar/`, promote to ADRs under `docs/adr/ADR-XXXX-*.md`, update `docs/adr/index.json`, and clean up processed AARs
+- Purpose: detect AARs under configured `docs/aar/` directories, promote to ADRs under each paired `docs/adr/ADR-XXXX-*.md`, update each `docs/adr/index.json`, and clean up processed AARs
 - Features: agent-friendly template (Agent Playbook, Agent Signals, Validation Rules), slim index, progress logs, automatic AAR cleanup
 
 ### Inputs
@@ -137,12 +137,16 @@ ADR 2.0 is the natural evolution of architecture documentation in an AI-native d
 - `pr_title` (optional, default `chore: ADR auto-update`): PR title/commit message
 - `pr_body` (optional): PR body
 - `pr_base` (optional): base branch (defaults to repo default)
+- `reviewers` (optional): comma or newline separated GitHub usernames to request as PR reviewers
+- `docs_dirs` (optional, default `docs`): comma or newline separated docs directories to process. Each directory must contain `aar/` and `adr/`
+- `add_paths` (optional, default `docs/**`): paths passed to `create-pull-request` `add-paths`
 - `language` (optional, default `en`): ADR output language (not stored in front matter; applies to generated text)
 
 ### Permissions
 ```yaml
 permissions:
   contents: write
+  pull-requests: write
 ```
 
 ### Example workflow (`.github/workflows/adr.yaml`)
@@ -170,21 +174,29 @@ jobs:
           pr_branch: adr/auto-${{ github.run_id }}
           pr_title: chore: ADR auto-update (#${{ github.run_number }})
           pr_body: Automated ADR updates generated from AARs.
+          reviewers: JuHyung-Son
+          docs_dirs: |
+            apps/backend/docs
+            apps/frontend/docs
+          add_paths: |
+            apps/**/docs/adr/**
+            apps/**/docs/aar/**
 ```
 
 ### Flow
-1) Scan `docs/aar/` → detect candidates  
-2) Generate ADRs (`docs/adr/ADR-XXXX-<slug>.md` with front matter `id/scope/created_at/updated_at/decision/context/rationale/alternatives/consequences/related/validation_rules/agent_playbook/agent_signals/index_terms`)  
-3) Update slim `docs/adr/index.json` (with `decision_summary`)  
+1) Scan each configured `<docs_dir>/aar/` → detect candidates  
+2) Generate ADRs (`<docs_dir>/adr/ADR-XXXX-<slug>.md` with front matter `id/scope/created_at/updated_at/decision/context/rationale/alternatives/consequences/related/validation_rules/agent_playbook/agent_signals/index_terms`)  
+3) Update each slim `<docs_dir>/adr/index.json` (with `decision_summary`)  
 4) Delete promoted AARs and non-candidates  
 5) Open PR with the ADR/cleanup changes (skipped if no changes)  
 6) ADR content generated in the selected `language` (front matter only; no duplicated markdown body)
 
 ### Environment
 - `ADR2_REPO_ROOT` is auto-set to `github.workspace` so the action runs against the calling repo.
+- `ADR2_DOCS_DIRS` is auto-set from `docs_dirs`.
 
 ### Caution
-- AAR source files under `docs/aar/` are deleted after processing; back them up elsewhere if you need to keep originals.
+- AAR source files under each configured `<docs_dir>/aar/` are deleted after processing; back them up elsewhere if you need to keep originals.
 
 ### ADR output (agent-friendly)
 - Front matter (YAML between `---`): `id`, `scope`, `created_at`, `updated_at`, `decision`, `context`, `rationale`, `alternatives`, `consequences`, `related`, `validation_rules`, `agent_playbook`, `agent_signals`(importance/enforcement), `index_terms`

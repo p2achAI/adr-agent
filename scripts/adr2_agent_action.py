@@ -3,10 +3,10 @@
 ADR 2.0 agent-focused promotion script.
 
 This script is meant to be run inside CI (GitHub Actions) to:
-- Scan docs/aar/ for AAR files
+- Scan configured docs/aar/ directories for AAR files
 - Detect AARs that should be promoted to ADRs
 - Generate agent-friendly ADR markdown with structured front matter
-- Maintain docs/adr/index.json so agents can quickly locate relevant ADRs
+- Maintain configured docs/adr/index.json files so agents can quickly locate relevant ADRs
 
 Requirements:
 - Set LLM_PROVIDER to 'openai' (default) or 'claude'.
@@ -62,10 +62,6 @@ SafeYAMLDumper.add_representer(str, str_representer)
 
 ACTION_ROOT = Path(__file__).resolve().parents[1]
 ROOT = Path(os.getenv("ADR2_REPO_ROOT") or Path.cwd()).resolve()
-DOCS_DIR = ROOT / "docs"
-ADR_DIR = DOCS_DIR / "adr"
-AAR_DIR = DOCS_DIR / "aar"
-INDEX_PATH = ADR_DIR / "index.json"
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 
@@ -208,6 +204,52 @@ class ADRCandidate:
     scope: str
     detection: Dict
     adr_payload: Dict
+
+
+@dataclass(frozen=True)
+class DocsContext:
+    docs_dir: Path
+    aar_dir: Path
+    adr_dir: Path
+    index_path: Path
+
+
+def _split_path_list(value: str) -> List[str]:
+    return [item.strip() for item in re.split(r"[\n,]+", value) if item.strip()]
+
+
+def resolve_repo_path(value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def resolve_docs_contexts() -> List[DocsContext]:
+    docs_dir_values = _split_path_list(os.getenv("ADR2_DOCS_DIRS", "")) or ["docs"]
+    contexts = []
+    seen: set[Path] = set()
+    for value in docs_dir_values:
+        docs_dir = resolve_repo_path(value)
+        if docs_dir in seen:
+            continue
+        seen.add(docs_dir)
+        contexts.append(
+            DocsContext(
+                docs_dir=docs_dir,
+                aar_dir=docs_dir / "aar",
+                adr_dir=docs_dir / "adr",
+                index_path=docs_dir / "adr" / "index.json",
+            )
+        )
+    return contexts
 
 
 _OPENAI_CLIENT: OpenAI | None = None
@@ -467,16 +509,19 @@ def maybe_add_agentic_working_notes(aar_text: str) -> str:
 
 def detect_candidates(
     prompts: Dict[str, str],
+    context: DocsContext,
 ) -> Tuple[List[Tuple[Path, Dict]], List[Path]]:
     aar_paths = []
-    if AAR_DIR.exists():
-        for path in AAR_DIR.rglob("*.md"):
+    if context.aar_dir.exists():
+        for path in context.aar_dir.rglob("*.md"):
             aar_paths.append(path)
     else:
-        log("docs/aar not found; skipping AAR scan.")
+        log(f"{display_path(context.aar_dir)} not found; skipping AAR scan.")
         return [], []
 
-    log(f"Discovered {len(aar_paths)} AAR markdown file(s) under docs/aar/.")
+    log(
+        f"Discovered {len(aar_paths)} AAR markdown file(s) under {display_path(context.aar_dir)}/."
+    )
 
     if not aar_paths:
         return [], []
@@ -713,12 +758,12 @@ def render_adr(markup: Dict, body: Dict) -> str:
     )
 
 
-def catalog_existing_adrs() -> List[Dict]:
+def catalog_existing_adrs(context: DocsContext) -> List[Dict]:
     catalog: List[Dict] = []
-    if not ADR_DIR.exists():
+    if not context.adr_dir.exists():
         return catalog
 
-    for path in ADR_DIR.glob("*.md"):
+    for path in context.adr_dir.glob("*.md"):
         meta, _ = parse_front_matter(path)
         if not meta:
             continue
@@ -731,7 +776,7 @@ def catalog_existing_adrs() -> List[Dict]:
                 "validation_rules": meta.get("validation_rules", []),
                 "agent_playbook": meta.get("agent_playbook", []),
                 "agent_signals": meta.get("agent_signals", {}),
-                "path": str(path.relative_to(ROOT)),
+                "path": display_path(path),
                 "decision": meta.get("decision"),
                 "index_terms": meta.get("index_terms", []),
                 "updated_at": meta.get("updated_at"),
@@ -740,7 +785,7 @@ def catalog_existing_adrs() -> List[Dict]:
     return catalog
 
 
-def write_index(catalog: List[Dict]) -> None:
+def write_index(catalog: List[Dict], context: DocsContext) -> None:
     def summarize(decision: str | None) -> str:
         if not decision:
             return ""
@@ -768,11 +813,11 @@ def write_index(catalog: List[Dict]) -> None:
         "count": len(thin_items),
         "items": sorted(thin_items, key=lambda c: c.get("id", "")),
     }
-    write_file(INDEX_PATH, json.dumps(payload, indent=2, ensure_ascii=False))
+    write_file(context.index_path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def already_promoted(source_path: Path, catalog: List[Dict]) -> bool:
-    rel = str(source_path.relative_to(ROOT))
+    rel = display_path(source_path)
     return any(entry.get("source") == rel for entry in catalog)
 
 
@@ -792,93 +837,101 @@ def main() -> None:
     log(f"Repo root: {ROOT}")
     log(f"Language: {DEFAULT_LANGUAGE}")
     log("Agentic reasoning: on")
-    catalog = catalog_existing_adrs()
-    log(f"Loaded catalog with {len(catalog)} existing ADR(s).")
+    processed_any = False
 
-    detections, non_candidates = detect_candidates(prompts)
-    non_candidate_deletions: set[Path] = set()
-    candidate_deletions: set[Path] = set()
-    if not detections and not non_candidates:
-        log("No ADR candidates found.")
-        return
+    for context in resolve_docs_contexts():
+        log(f"Docs dir: {display_path(context.docs_dir)}")
+        catalog = catalog_existing_adrs(context)
+        log(f"Loaded catalog with {len(catalog)} existing ADR(s).")
 
-    new_catalog_entries: List[Dict] = []
-    for path, detection in detections:
-        if already_promoted(path, catalog):
-            log(f"Skipping already promoted AAR: {path}")
-            # still mark for deletion to avoid reprocessing noise
-            non_candidate_deletions.add(path)
+        detections, non_candidates = detect_candidates(prompts, context)
+        non_candidate_deletions: set[Path] = set()
+        candidate_deletions: set[Path] = set()
+        if not detections and not non_candidates:
+            log("No ADR candidates found.")
             continue
 
-        scope_hint = detection.get("decisionScope", "architecture")
-        aar_text = read_file(path)
-        payload = generate_adr_payload(prompts, aar_text, scope_hint)
-        maybe_enrich_validation_rules(prompts, payload)
-        payload["alternatives"] = normalize_string_list(payload.get("alternatives"))
-        payload["consequences"] = normalize_string_list(payload.get("consequences"))
-        payload["validation_rules"] = normalize_string_list(payload.get("validation_rules"))
-        payload["agent_playbook"] = normalize_string_list(payload.get("agent_playbook"))
-        payload["index_terms"] = normalize_string_list(payload.get("index_terms"))
-        if not isinstance(payload.get("agent_signals"), dict):
-            payload["agent_signals"] = {"importance": "medium", "enforcement": "should"}
+        processed_any = True
+        new_catalog_entries: List[Dict] = []
+        for path, detection in detections:
+            if already_promoted(path, catalog):
+                log(f"Skipping already promoted AAR: {path}")
+                # still mark for deletion to avoid reprocessing noise
+                non_candidate_deletions.add(path)
+                continue
 
-        adr_id = next_adr_id(catalog + new_catalog_entries)
-        slug = slugify(payload.get("title", adr_id))
-        adr_filename = f"{adr_id}-{slug}.md"
-        adr_path = ADR_DIR / adr_filename
+            scope_hint = detection.get("decisionScope", "architecture")
+            aar_text = read_file(path)
+            payload = generate_adr_payload(prompts, aar_text, scope_hint)
+            maybe_enrich_validation_rules(prompts, payload)
+            payload["alternatives"] = normalize_string_list(payload.get("alternatives"))
+            payload["consequences"] = normalize_string_list(payload.get("consequences"))
+            payload["validation_rules"] = normalize_string_list(payload.get("validation_rules"))
+            payload["agent_playbook"] = normalize_string_list(payload.get("agent_playbook"))
+            payload["index_terms"] = normalize_string_list(payload.get("index_terms"))
+            if not isinstance(payload.get("agent_signals"), dict):
+                payload["agent_signals"] = {"importance": "medium", "enforcement": "should"}
 
-        related_ids = resolve_related(
-            payload.get("related_suggestions", []), catalog + new_catalog_entries
-        )
+            adr_id = next_adr_id(catalog + new_catalog_entries)
+            slug = slugify(payload.get("title", adr_id))
+            adr_filename = f"{adr_id}-{slug}.md"
+            adr_path = context.adr_dir / adr_filename
 
-        markup = {
-            "id": adr_id,
-            "title": payload.get("title", adr_id),
-            "scope": payload.get("scope", scope_hint),
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "decision": payload.get("decision", "").strip(),
-            "related": related_ids,
-            "validation_rules": payload.get("validation_rules", []),
-            "agent_playbook": payload.get("agent_playbook", []),
-            "agent_signals": payload.get(
-                "agent_signals", {"importance": "medium", "enforcement": "should"}
-            ),
-            "index_terms": payload.get("index_terms", []),
-        }
+            related_ids = resolve_related(
+                payload.get("related_suggestions", []), catalog + new_catalog_entries
+            )
 
-        content = render_adr(markup, payload)
-        write_file(adr_path, content)
+            markup = {
+                "id": adr_id,
+                "title": payload.get("title", adr_id),
+                "scope": payload.get("scope", scope_hint),
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+                "decision": payload.get("decision", "").strip(),
+                "related": related_ids,
+                "validation_rules": payload.get("validation_rules", []),
+                "agent_playbook": payload.get("agent_playbook", []),
+                "agent_signals": payload.get(
+                    "agent_signals", {"importance": "medium", "enforcement": "should"}
+                ),
+                "index_terms": payload.get("index_terms", []),
+            }
 
-        catalog_entry = {
-            "id": adr_id,
-            "title": markup["title"],
-            "scope": markup["scope"],
-            "related": related_ids,
-            "validation_rules": markup["validation_rules"],
-            "path": str(adr_path.relative_to(ROOT)),
-            "decision": markup["decision"],
-            "agent_playbook": markup["agent_playbook"],
-            "agent_signals": markup["agent_signals"],
-            "index_terms": markup["index_terms"],
-            "updated_at": markup["updated_at"],
-        }
-        new_catalog_entries.append(catalog_entry)
-        log(f"Generated ADR {adr_id} -> {adr_path}")
-        candidate_deletions.add(path)
+            content = render_adr(markup, payload)
+            write_file(adr_path, content)
 
-    # delete non-candidates and processed candidates
-    to_delete = set(non_candidates) | non_candidate_deletions | candidate_deletions
-    for path in to_delete:
-        try:
-            path.unlink()
-            log(f"Deleted AAR: {path}")
-        except Exception as exc:  # pragma: no cover - filesystem issue
-            log(f"Failed to delete AAR {path}: {exc}")
+            catalog_entry = {
+                "id": adr_id,
+                "title": markup["title"],
+                "scope": markup["scope"],
+                "related": related_ids,
+                "validation_rules": markup["validation_rules"],
+                "path": display_path(adr_path),
+                "decision": markup["decision"],
+                "agent_playbook": markup["agent_playbook"],
+                "agent_signals": markup["agent_signals"],
+                "index_terms": markup["index_terms"],
+                "updated_at": markup["updated_at"],
+            }
+            new_catalog_entries.append(catalog_entry)
+            log(f"Generated ADR {adr_id} -> {adr_path}")
+            candidate_deletions.add(path)
 
-    full_catalog = catalog + new_catalog_entries
-    write_index(full_catalog)
-    log(f"Index updated with {len(full_catalog)} entries at {INDEX_PATH}")
+        # delete non-candidates and processed candidates
+        to_delete = set(non_candidates) | non_candidate_deletions | candidate_deletions
+        for path in to_delete:
+            try:
+                path.unlink()
+                log(f"Deleted AAR: {path}")
+            except Exception as exc:  # pragma: no cover - filesystem issue
+                log(f"Failed to delete AAR {path}: {exc}")
+
+        full_catalog = catalog + new_catalog_entries
+        write_index(full_catalog, context)
+        log(f"Index updated with {len(full_catalog)} entries at {context.index_path}")
+
+    if not processed_any:
+        log("No ADR candidates found in any configured docs dir.")
 
 
 if __name__ == "__main__":
