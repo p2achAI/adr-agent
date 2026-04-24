@@ -65,3 +65,45 @@ def test_docs_dirs_contexts_accept_absolute_paths(monkeypatch, tmp_path):
     assert contexts[0].docs_dir == external_docs.resolve()
     assert contexts[0].aar_dir == external_docs.resolve() / "aar"
     assert module.display_path(external_docs.resolve()) == str(external_docs.resolve())
+
+
+def test_candidate_decision_requires_boolean_true(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+
+    is_candidate, scope = module.normalize_candidate_decision(
+        {"isCandidate": "false", "decisionScope": "api-contract"}
+    )
+
+    assert is_candidate is False
+    assert scope == "api-contract"
+
+
+def test_candidate_decision_rejects_missing_scope(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+
+    is_candidate, scope = module.normalize_candidate_decision({"isCandidate": True})
+
+    assert is_candidate is False
+    assert scope == ""
+
+
+def test_candidate_decision_rejects_minor_change(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+
+    is_candidate, scope = module.normalize_candidate_decision(
+        {"isCandidate": True, "decisionScope": "minor-change"}
+    )
+
+    assert is_candidate is False
+    assert scope == "minor-change"
+
+
+def test_candidate_decision_accepts_valid_candidate(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+
+    is_candidate, scope = module.normalize_candidate_decision(
+        {"isCandidate": True, "decisionScope": "api-contract"}
+    )
+
+    assert is_candidate is True
+    assert scope == "api-contract"

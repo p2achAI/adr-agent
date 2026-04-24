@@ -71,6 +71,17 @@ else:
     DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
 
 DEFAULT_LANGUAGE = os.getenv("ADR2_LANGUAGE", "en")
+VALID_DECISION_SCOPES = {
+    "api-contract",
+    "architecture-boundary",
+    "data-governance",
+    "runtime-operations",
+    "security-trust",
+    "integration-contract",
+    "migration-compatibility",
+    "developer-platform",
+    "minor-change",
+}
 
 
 def log(msg: str) -> None:
@@ -454,6 +465,24 @@ def call_openai_json_object(
     return {}
 
 
+def normalize_candidate_decision(detection: Dict[str, Any]) -> Tuple[bool, str]:
+    """Interpret detector output conservatively."""
+    raw_candidate = detection.get("isCandidate")
+    decision_scope = (detection.get("decisionScope") or "").strip()
+
+    is_candidate = raw_candidate is True
+    if not is_candidate:
+        return False, decision_scope
+
+    if decision_scope not in VALID_DECISION_SCOPES:
+        return False, decision_scope
+
+    if decision_scope == "minor-change":
+        return False, decision_scope
+
+    return True, decision_scope
+
+
 def call_openai_json_value(
     system_prompt: str,
     user_content: str,
@@ -540,21 +569,21 @@ def detect_candidates(
             maybe_add_agentic_working_notes(aar_text),
             instructions=instructions,
         )
-        is_candidate = bool(detection.get("isCandidate"))
-        decision_scope = (detection.get("decisionScope") or "").strip()
-        # Extra safety: never promote "minor-change" even if the model says isCandidate=true.
-        if is_candidate and decision_scope == "minor-change":
-            log(f"Rejected minor-change candidate: {path}")
-            non_candidates.append(path)
-            continue
-
+        is_candidate, decision_scope = normalize_candidate_decision(detection)
         if is_candidate:
             log(
                 f"Candidate detected: {path} (scope={decision_scope or detection.get('decisionScope')})"
             )
             candidates.append((path, detection))
         else:
-            log(f"Non-candidate: {path}")
+            reason = ""
+            if detection.get("isCandidate") is not True:
+                reason = f" (isCandidate={detection.get('isCandidate')!r})"
+            elif decision_scope == "minor-change":
+                reason = " (scope=minor-change)"
+            elif decision_scope not in VALID_DECISION_SCOPES:
+                reason = f" (invalid scope={decision_scope!r})"
+            log(f"Non-candidate: {path}{reason}")
             non_candidates.append(path)
     return candidates, non_candidates
 
