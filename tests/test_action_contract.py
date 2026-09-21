@@ -55,3 +55,14 @@ def test_validation_mode_generates_without_staging_or_publishing():
 
     assert "inputs.publish_mode != 'none'" in stage["if"]
     assert "inputs.publish_mode == 'pull-request'" in create_pr["if"]
+
+
+def test_bedrock_inputs_are_forwarded_without_overriding_aws_credentials():
+    action = _action()
+    env = _step("Generate ADRs from AARs")["env"]
+    assert "bedrock" in action["inputs"]["llm_provider"]["description"]
+    assert action["inputs"]["bedrock_reasoning_effort"]["default"] == "medium"
+    assert env["BEDROCK_REASONING_EFFORT"] == "${{ inputs.bedrock_reasoning_effort }}"
+    assert env["BEDROCK_MODEL"] == "${{ inputs.bedrock_model }}"
+    assert env["BEDROCK_AWS_REGION"] == "${{ inputs.aws_region }}"
+    assert not {"AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & env.keys()

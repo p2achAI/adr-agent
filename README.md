@@ -204,3 +204,41 @@ jobs:
 - Front matter (YAML between `---`): existing v1 fields plus `owns`, `contracts`, `applies_to`, and typed `relations`. Top-level `related` remains readable during v2 migration.
 - Index: deterministic schema v2 with `schema_version`, `source_hash`, ownership/contract/relation/rule metadata. Set `require_ownership: true` after backfill to reject missing ownership, invalid domains, broken relations, and duplicate producers.
 - Body: `## Context (for humans)` with the same context text (minimal human-readable section)
+
+## Running the Action with Amazon Bedrock
+
+Set `llm_provider: bedrock` to invoke OpenAI models through the Bedrock runtime
+Responses API. Existing `openai` (default) and direct `claude` providers are unchanged.
+
+- `bedrock_model`: required runtime inference profile ID, for example
+  `global.openai.gpt-5.6-terra`. This provider uses the OpenAI Responses API, not
+  the Anthropic Messages API; Claude models are not supported by this provider.
+- `bedrock_reasoning_effort`: defaults to `medium`.
+- `aws_region`: explicit region; otherwise `AWS_REGION`, then `AWS_DEFAULT_REGION`.
+- Authentication uses SigV4 and the AWS SDK credential chain, including runner
+  roles or temporary credentials from GitHub OIDC. No OpenAI/Anthropic API key
+  is needed. The Action does not assume a role itself.
+- The caller needs `bedrock:InvokeModel` for the selected inference profile,
+  underlying models, and the account's default Bedrock project. Check model
+  access and regional availability before deploying.
+- `global.*` profiles can process requests across commercial AWS Regions; use
+  an appropriate geographic profile when data residency constraints apply.
+- Responses use `store: false`; repository content is not persisted as Responses
+  conversation state. Provider errors do not fall back to another provider.
+- `operation: index` remains deterministic and requires no LLM credentials.
+
+After configuring AWS credentials in the caller job:
+
+```yaml
+- uses: p2achAI/adr-agent@v2.1.0
+  with:
+    operation: reconcile
+    llm_provider: bedrock
+    bedrock_model: global.openai.gpt-5.6-terra
+    bedrock_reasoning_effort: medium
+    aws_region: ap-northeast-2
+    github_token: ${{ secrets.RW_TOKEN }}
+```
+
+AWS authentication and GitHub PR permissions are separate. For OIDC, restrict
+role trust to the intended repository and branch or GitHub environment.
