@@ -8,7 +8,7 @@ This script is meant to be run inside CI (GitHub Actions) to:
 - Deterministically rebuild configured docs/adr/index.json files
 
 Requirements:
-- Set LLM_PROVIDER to 'openai' (default) or 'claude'.
+- Set LLM_PROVIDER to 'openai' (default), 'claude', or 'bedrock'.
 - For OpenAI: OPENAI_API_KEY must be available. Optionally set OPENAI_MODEL (defaults to gpt-5.1).
 - For Claude: ANTHROPIC_API_KEY must be available. Optionally set CLAUDE_MODEL (defaults to claude-sonnet-4-6).
 """
@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 import anthropic
+import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from botocore.httpsession import URLLib3Session
 import yaml
 from openai import OpenAI, OpenAIError
 
@@ -67,7 +71,9 @@ ROOT = Path(os.getenv("ADR2_REPO_ROOT") or Path.cwd()).resolve()
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 
-if LLM_PROVIDER == "claude":
+if LLM_PROVIDER == "bedrock":
+    DEFAULT_MODEL = os.getenv("BEDROCK_MODEL", "").strip()
+elif LLM_PROVIDER == "claude":
     DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 else:
     DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
@@ -660,6 +666,69 @@ def call_claude_text(
     return "".join(text_blocks)
 
 
+def bedrock_region() -> str:
+    for name in ("BEDROCK_AWS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def call_bedrock_text(
+    *,
+    model: str,
+    messages: List[Dict[str, str]],
+    response_format: Dict | None = None,
+    instructions: str | None = None,
+) -> str:
+    """Invoke Bedrock's OpenAI Responses API using refreshable AWS credentials."""
+    region = bedrock_region()
+    if not region:
+        raise ValueError("An AWS region is required when LLM_PROVIDER=bedrock.")
+    effort = os.getenv("BEDROCK_REASONING_EFFORT", "medium").strip()
+    if effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError(f"Unsupported BEDROCK_REASONING_EFFORT: {effort}")
+    payload: Dict[str, Any] = {
+        "model": model,
+        "input": messages,
+        "reasoning": {"effort": effort},
+        "store": False,
+    }
+    if instructions:
+        payload["instructions"] = instructions
+    if response_format is not None:
+        payload["text"] = {"format": response_format}
+    credentials = boto3.Session().get_credentials()
+    if credentials is None:
+        raise RuntimeError("AWS credentials are required when LLM_PROVIDER=bedrock.")
+    request = AWSRequest(
+        method="POST",
+        url=f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    SigV4Auth(credentials.get_frozen_credentials(), "bedrock", region).add_auth(request)
+    session = URLLib3Session(timeout=600)
+    try:
+        response = session.send(request.prepare())
+    finally:
+        session.close()
+    if response.status_code != 200:
+        # Do not include request/response bodies that may contain repository content.
+        raise RuntimeError(f"Bedrock Responses API call failed (HTTP {response.status_code}).")
+    result = json.loads(response.content)
+    if result.get("status") != "completed":
+        raise RuntimeError(f"Bedrock response did not complete (status={result.get('status')}).")
+    text = "".join(
+        part["text"]
+        for item in result.get("output", []) if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    if not text:
+        raise RuntimeError("Bedrock response contained no output text.")
+    return text
+
+
 def call_llm_text(
     *,
     model: str,
@@ -667,7 +736,14 @@ def call_llm_text(
     response_format: Dict | None = None,
     instructions: str | None = None,
 ) -> str:
-    """Dispatch to the configured LLM provider (openai or claude)."""
+    """Dispatch to the configured LLM provider without provider fallback."""
+    if LLM_PROVIDER == "bedrock":
+        return call_bedrock_text(
+            model=model, messages=messages, response_format=response_format,
+            instructions=instructions,
+        )
+    if LLM_PROVIDER not in {"openai", "claude"}:
+        raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
     if LLM_PROVIDER == "claude":
         return call_claude_text(
             model=model,
@@ -1631,14 +1707,22 @@ def main() -> None:
             )
         return
 
-    if LLM_PROVIDER == "claude":
+    if LLM_PROVIDER == "bedrock":
+        if not DEFAULT_MODEL:
+            raise SystemExit("BEDROCK_MODEL is required when LLM_PROVIDER=bedrock.")
+        if not bedrock_region():
+            raise SystemExit("An AWS region is required when LLM_PROVIDER=bedrock.")
+        log(f"Provider: Bedrock (model={DEFAULT_MODEL}, region={bedrock_region()})")
+    elif LLM_PROVIDER == "claude":
         if not os.getenv("ANTHROPIC_API_KEY"):
             raise SystemExit("ANTHROPIC_API_KEY is required when LLM_PROVIDER=claude.")
         log(f"Provider: Claude (model={DEFAULT_MODEL})")
-    else:
+    elif LLM_PROVIDER == "openai":
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("OPENAI_API_KEY is required when LLM_PROVIDER=openai.")
         log(f"Provider: OpenAI (model={DEFAULT_MODEL})")
+    else:
+        raise SystemExit(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
 
     prompts = load_prompts()
     if "adr2" not in prompts:
