@@ -199,6 +199,8 @@ jobs:
 
 ### Caution
 - `defer` keeps the AAR. `covered`, `amend`, `create`, and `reject` remove it only in the generated PR.
+- New ADRs with a configured taxonomy must resolve to a registered domain before writing any ADR or removing the AAR. A valid model proposal or curated term match can resolve the domain; unresolved candidates are logged and deferred for taxonomy review. `require_ownership: true` also defers creation when no taxonomy is available. Without a taxonomy and with `require_ownership: false`, domain classification remains optional.
+- Creation validates the candidate catalog before publication and stages the new ADR so a failed write leaves no partial ADR. After correcting the taxonomy or retrying a failed write, run `reconcile` again to process the preserved AAR. This is a per-candidate safeguard, not a transaction across the entire reconciliation run.
 
 ### ADR output (agent-friendly)
 - Front matter (YAML between `---`): existing v1 fields plus `owns`, `contracts`, `applies_to`, and typed `relations`. Top-level `related` remains readable during v2 migration.

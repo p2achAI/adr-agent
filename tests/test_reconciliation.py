@@ -453,3 +453,224 @@ def test_catalog_validation_rejects_duplicate_contract_producer_across_apps(monk
     )
 
     assert errors == ["contract producer device.v1 is duplicated by backend/ADR-0001 and frontend/ADR-0002"]
+
+
+def prepare_domain_reconciliation(monkeypatch, tmp_path, *, proposed=None, terms=(), taxonomy=True, required=True):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ADR2_OPERATION", "reconcile")
+    monkeypatch.setenv("ADR2_REQUIRE_OWNERSHIP", str(required).lower())
+    monkeypatch.delenv("ADR2_DOCS_DIRS", raising=False)
+    module = load_module(monkeypatch, tmp_path)
+    context = module.resolve_docs_contexts()[0]
+    existing = context.adr_dir / "ADR-0159-existing.md"
+    write_adr(existing, id="ADR-0159")
+    if taxonomy:
+        context.domains_path.write_text(module_yaml({"domains": [
+            {"key": "device", "match_terms": ["device"]},
+            {"key": "address-management", "match_terms": list(terms)},
+        ]}), encoding="utf-8")
+    aar = context.aar_dir / "address-group-optional-address-fields.md"
+    aar.parent.mkdir(parents=True)
+    aar.write_text("주소 그룹의 자동 보완과 수동 입력 저장", encoding="utf-8")
+    payload = {
+        "title": "주소 그룹의 자동 보완과 수동 입력 저장",
+        "decision": "주소 그룹은 geocoding과 수동 입력의 저장 책임을 구분한다.",
+        "index_terms": ["주소 그룹", "geocoding"],
+        "owns": [{"type": "component", "key": "address_group"}],
+    }
+    if proposed is not None:
+        payload["domain"] = proposed
+
+    def fake_call(system_prompt, user_content, model=None, *, instructions=None):
+        if system_prompt == "candidate":
+            return {"action": "create"}
+        # Exercise the real generator defaults, resolver, writer and final validation.
+        return dict(payload)
+
+    monkeypatch.setattr(module, "load_prompts", lambda: {"adr2": "instructions", "candidate": "candidate"})
+    monkeypatch.setattr(module, "call_openai_json_object", fake_call)
+    return module, context, aar, payload
+
+
+def docs_snapshot(context):
+    return {str(path.relative_to(context.docs_dir)): path.read_bytes()
+            for path in context.docs_dir.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("proposed", [None, "", "unclassified", "not-registered"])
+def test_unresolved_domain_defers_before_any_document_change(monkeypatch, tmp_path, capsys, required, proposed):
+    module, context, aar, _ = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed=proposed, required=required,
+    )
+    before = docs_snapshot(context)
+
+    module.main()
+    module.main()
+
+    assert docs_snapshot(context) == before
+    assert aar.exists()
+    assert "Deferred create because no registered domain could be resolved" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("proposed,terms", [
+    ("address-management", ()),
+    (None, ("주소 그룹", "geocoding")),
+    ("not-registered", ("주소 그룹", "geocoding")),
+])
+def test_resolved_domain_creates_valid_adr_once(monkeypatch, tmp_path, proposed, terms):
+    module, context, aar, _ = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed=proposed, terms=terms,
+    )
+
+    module.main()
+
+    assert not aar.exists()
+    created = list(context.adr_dir.glob("ADR-0160-*.md"))
+    assert len(created) == 1
+    meta, _ = module.parse_front_matter(created[0])
+    assert meta["domain"] == "address-management"
+    assert module.validate_catalog(module.catalog_existing_adrs(context), require_ownership=True) == []
+    before_retry = docs_snapshot(context)
+    module.main()
+    assert docs_snapshot(context) == before_retry
+
+
+def test_deferred_aar_can_be_retried_after_taxonomy_is_completed(monkeypatch, tmp_path):
+    module, context, aar, _ = prepare_domain_reconciliation(monkeypatch, tmp_path)
+    before = docs_snapshot(context)
+    module.main()
+    assert docs_snapshot(context) == before
+
+    context.domains_path.write_text(module_yaml({"domains": [
+        {"key": "device", "match_terms": ["device"]},
+        {"key": "address-management", "match_terms": ["주소 그룹", "geocoding"]},
+    ]}), encoding="utf-8")
+    module.main()
+
+    assert not aar.exists()
+    created = list(context.adr_dir.glob("ADR-0160-*.md"))
+    assert len(created) == 1
+    assert module.parse_front_matter(created[0])[0]["domain"] == "address-management"
+
+
+def test_domain_fallback_uses_canonical_index_terms(monkeypatch, tmp_path):
+    module, context, aar, payload = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, terms=("geocoding",),
+    )
+    write_adr(context.adr_dir / "ADR-0159-existing.md", id="ADR-0159", index_terms=["geocoding"])
+    payload.update(title="새 경계", decision="저장 값을 검증한다.", index_terms=["geo-coding"])
+
+    module.main()
+
+    assert not aar.exists()
+    meta, _ = module.parse_front_matter(next(context.adr_dir.glob("ADR-0160-*.md")))
+    assert meta["domain"] == "address-management"
+    assert meta["index_terms"] == ["geocoding"]
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_missing_taxonomy_only_allows_creation_when_domain_is_optional(monkeypatch, tmp_path, required):
+    module, context, aar, _ = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed="address-management", taxonomy=False, required=required,
+    )
+    before = docs_snapshot(context)
+    module.main()
+    if required:
+        assert docs_snapshot(context) == before
+    else:
+        assert not aar.exists()
+        meta, _ = module.parse_front_matter(next(context.adr_dir.glob("ADR-0160-*.md")))
+        assert "domain" not in meta
+
+
+def test_invalid_catalog_candidate_keeps_aar_and_existing_adr(monkeypatch, tmp_path):
+    module, context, aar, payload = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed="address-management",
+    )
+    payload["contracts"] = [{"id": "device.settings.v1", "role": "producer"}]
+    before = docs_snapshot(context)
+
+    module.main()
+
+    assert docs_snapshot(context) == before
+    assert aar.exists()
+
+
+@pytest.mark.parametrize("taxonomy", ["domains: []\n", "domains: invalid\n", "domains: [\n"])
+def test_unusable_taxonomy_does_not_disable_classification(monkeypatch, tmp_path, taxonomy):
+    module, context, aar, _ = prepare_domain_reconciliation(monkeypatch, tmp_path, required=False)
+    context.domains_path.write_text(taxonomy, encoding="utf-8")
+    before = docs_snapshot(context)
+
+    module.main()
+
+    assert docs_snapshot(context) == before
+    assert aar.exists()
+
+
+@pytest.mark.parametrize("failure", ["generation", "partial_write", "publish"])
+def test_create_failure_preserves_aar_without_partial_adr_and_retry_succeeds(monkeypatch, tmp_path, failure):
+    module, context, aar, _ = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed="address-management",
+    )
+    before = docs_snapshot(context)
+
+    def fail(*args, **kwargs):
+        raise OSError("injected failure")
+
+    def partial_write(path, content):
+        path.write_text(content[:20], encoding="utf-8")
+        fail()
+
+    with monkeypatch.context() as patch:
+        if failure == "generation":
+            patch.setattr(module, "generate_adr_payload", fail)
+        elif failure == "partial_write":
+            patch.setattr(module, "write_file", partial_write)
+        else:
+            patch.setattr(Path, "replace", fail)
+        with pytest.raises(OSError, match="injected failure"):
+            module.main()
+
+    assert docs_snapshot(context) == before
+    assert not list(context.adr_dir.glob(".adr-*"))
+    assert aar.exists()
+    module.main()
+    assert not aar.exists()
+    assert len(list(context.adr_dir.glob("ADR-0160-*.md"))) == 1
+
+
+def test_aar_removal_failure_leaves_complete_adr_and_can_be_reconciled_on_retry(monkeypatch, tmp_path):
+    module, context, aar, _ = prepare_domain_reconciliation(
+        monkeypatch, tmp_path, proposed="address-management",
+    )
+    original_aar = aar.read_bytes()
+    unlink = Path.unlink
+
+    def fail_aar_removal(path, *args, **kwargs):
+        if path == aar:
+            raise OSError("AAR removal failed")
+        return unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_aar_removal)
+        with pytest.raises(OSError, match="AAR removal failed"):
+            module.main()
+
+    assert aar.read_bytes() == original_aar
+    catalog = module.catalog_existing_adrs(context)
+    assert module.validate_catalog(catalog, require_ownership=True) == []
+    generated = next(context.adr_dir.glob("ADR-0160-*.md"))
+    original_adr = generated.read_bytes()
+    # Even another create decision cannot duplicate the already published owner.
+    module.main()
+    assert aar.exists()
+    monkeypatch.setattr(module, "reconciliation_decision", lambda *args: {
+        "action": "covered", "target_adr_id": "ADR-0160",
+    })
+    module.main()
+    assert not aar.exists()
+    assert generated.read_bytes() == original_adr
+    assert len(list(context.adr_dir.glob("ADR-0160-*.md"))) == 1

@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -850,7 +851,8 @@ def build_generator_prompt(
         schema_hint += (
             f" domain must be exactly one key from this taxonomy based on the"
             f" ADR's primary authoritative boundary: [{domain_list}]. If none"
-            " fit well, omit the domain field rather than guessing."
+            " fit well, omit the domain field rather than guessing; unresolved"
+            " candidates will be deferred with their AAR preserved for taxonomy review."
         )
     return f"{base}\n\n{schema_hint}".strip()
 
@@ -1395,6 +1397,8 @@ def create_adr_from_aar(
     catalog: List[Dict],
     domains: List[Domain],
     scope_hint: str,
+    *,
+    require_ownership: bool = False,
 ) -> Dict[str, Any] | None:
     payload = generate_adr_payload(prompts, aar_text, scope_hint, domains)
     maybe_enrich_validation_rules(prompts, payload)
@@ -1419,6 +1423,14 @@ def create_adr_from_aar(
     adr_id = next_adr_id(catalog)
     related_ids = resolve_related(payload.get("related_suggestions", []), catalog)
     domain = resolve_domain(payload, domains, proposed=payload.get("domain"))
+    if (domains or context.domains_path.exists() or require_ownership) and (
+        not normalize_domain(domain, domains) or domain == UNCLASSIFIED_DOMAIN
+    ):
+        log(
+            "Deferred create because no registered domain could be resolved; "
+            f"review {display_path(context.domains_path)}. AAR preserved."
+        )
+        return None
     now = now_iso()
     markup = {
         "id": adr_id,
@@ -1438,15 +1450,32 @@ def create_adr_from_aar(
         "agent_signals": payload.get("agent_signals") or {"importance": "medium", "enforcement": "should"},
         "index_terms": payload["index_terms"],
     }
+    errors = validate_catalog(
+        [*catalog, markup],
+        require_ownership=require_ownership,
+        superseded_ids=catalog_superseded_ids(context),
+    )
+    if errors:
+        log("Deferred create because the candidate catalog is invalid:\n- " + "\n- ".join(errors))
+        return None
     path = context.adr_dir / f"{adr_id}-{slugify(markup['title'])}.md"
-    write_file(path, render_adr(markup, payload))
+    document = render_adr(markup, payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Publish only a complete ADR; an interrupted write must leave the AAR retryable.
+    with tempfile.TemporaryDirectory(prefix=".adr-", dir=path.parent) as staging:
+        staged_path = Path(staging) / path.name
+        write_file(staged_path, document)
+        staged_path.replace(path)
     log(f"Generated ADR {adr_id} -> {path}")
     entry = dict(markup)
     entry["path"] = display_path(path)
     return entry
 
 
-def reconcile_context(prompts: Dict[str, str], context: DocsContext, catalog: List[Dict], domains: List[Domain]) -> bool:
+def reconcile_context(
+    prompts: Dict[str, str], context: DocsContext, catalog: List[Dict], domains: List[Domain],
+    *, require_ownership: bool = False,
+) -> bool:
     if not context.aar_dir.exists():
         return False
     processed = False
@@ -1478,6 +1507,7 @@ def reconcile_context(prompts: Dict[str, str], context: DocsContext, catalog: Li
                 catalog,
                 domains,
                 str(decision.get("decision_scope") or DEFAULT_ADR_SCOPE),
+                require_ownership=require_ownership,
             )
             if created is None:
                 continue
@@ -1742,7 +1772,9 @@ def main() -> None:
         if domains:
             log(f"Loaded {len(domains)} domain(s) from {display_path(context.domains_path)}.")
         if operation == "reconcile":
-            processed_any = reconcile_context(prompts, context, catalog, domains) or processed_any
+            processed_any = reconcile_context(
+                prompts, context, catalog, domains, require_ownership=require_ownership,
+            ) or processed_any
         else:
             processed_any = consolidate_context(prompts, context, catalog, domains) or processed_any
         resulting_catalog = catalog_existing_adrs(context)
